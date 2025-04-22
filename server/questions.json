@@ -1,14 +1,70 @@
 {
   "AI": [
-    { "question": "What is Artificial Intelligence?", "expected": "Artificial Intelligence is the simulation of human intelligence in machines.", "keywords": ["simulation", "human intelligence", "machines"] },
-    { "question": "What is a neural network?", "expected": "A neural network is a series of algorithms that mimic the operations of a human brain to recognize relationships in data.", "keywords": ["algorithms", "mimic", "human brain", "relationships", "data"] }
+    {
+      "question": "What is Artificial Intelligence?",
+      "expected": "Artificial Intelligence is the simulation of human intelligence in machines.",
+      "keywords": [
+        "simulation",
+        "human intelligence",
+        "machines"
+      ]
+    },
+    {
+      "question": "What is a neural network?",
+      "expected": "A neural network is a series of algorithms that mimic the operations of a human brain to recognize relationships in data.",
+      "keywords": [
+        "algorithms",
+        "mimic",
+        "human brain",
+        "relationships",
+        "data"
+      ]
+    }
   ],
   "CN": [
-    { "question": "What is an IP address?", "expected": "An IP address is a unique identifier for a device on a network.", "keywords": ["unique identifier", "device", "network"] },
-    { "question": "What does DNS stand for?", "expected": "DNS stands for Domain Name System.", "keywords": ["domain", "name", "system"] }
+    {
+      "question": "What is an IP address?",
+      "expected": "An IP address is a unique identifier for a device on a network.",
+      "keywords": [
+        "unique identifier",
+        "device",
+        "network"
+      ]
+    },
+    {
+      "question": "What does DNS stand for?",
+      "expected": "DNS stands for Domain Name System.",
+      "keywords": [
+        "domain",
+        "name",
+        "system"
+      ]
+    }
   ],
   "DBMS": [
-    { "question": "What is normalization?", "expected": "Normalization is the process of organizing data to reduce redundancy.", "keywords": ["organizing data", "reduce redundancy"] },
-    { "question": "Define a primary key.", "expected": "A primary key is a unique identifier for a record in a table.", "keywords": ["unique identifier", "record", "table"] }
+    {
+      "question": "What is normalization?",
+      "expected": "Normalization is the process of organizing data to reduce redundancy.",
+      "keywords": [
+        "organizing data",
+        "reduce redundancy"
+      ]
+    },
+    {
+      "question": "Define a primary key.",
+      "expected": "A primary key is a unique identifier for a record in a table.",
+      "keywords": [
+        "unique identifier",
+        "record",
+        "table"
+      ]
+    },
+    {
+      "question": "What is the full form of SQL",
+      "expected": "The Full form of SQL is Structured Query Language",
+      "keywords": [
+        "Structured Query Language"
+      ]
+    }
   ]
-} 
+}
