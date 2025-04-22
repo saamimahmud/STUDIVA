@@ -72,12 +72,82 @@ const AddQuestionForm = ({ subject, onAdd, onCancel }) => {
     );
 };
 
+// --- Component for the Edit Question Form ---
+const EditQuestionForm = ({ subject, index, questionData, onSave, onCancel }) => {
+    const [editedQuestion, setEditedQuestion] = useState(questionData.question);
+    const [editedExpected, setEditedExpected] = useState(questionData.expected);
+    const [editedKeywords, setEditedKeywords] = useState((questionData.keywords || []).join(', '));
+    const [isSaving, setIsSaving] = useState(false);
+    const [editError, setEditError] = useState(null);
+
+    const handleSaveSubmit = async (e) => {
+        e.preventDefault();
+        setIsSaving(true);
+        setEditError(null);
+        const keywordsArray = editedKeywords.split(',').map(k => k.trim()).filter(k => k);
+        try {
+            await onSave(subject, index, { 
+                question: editedQuestion, 
+                expected: editedExpected, 
+                keywords: keywordsArray 
+            });
+            // Parent component will handle closing the form by resetting editing state
+        } catch (error) {
+            setEditError(error.message);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSaveSubmit} style={{ marginTop: '1rem', padding: '1rem', border: '1px solid #4CAF50', backgroundColor: '#f0fff0' }}>
+            <h4>Editing Question {index + 1} in {subject}</h4>
+            <div style={{ marginBottom: '0.5rem' }}>
+                <label>Question:</label><br />
+                <textarea 
+                    value={editedQuestion} 
+                    onChange={e => setEditedQuestion(e.target.value)} 
+                    required 
+                    style={{ width: '95%', minHeight: '40px' }} 
+                />
+            </div>
+            <div style={{ marginBottom: '0.5rem' }}>
+                <label>Expected Answer:</label><br />
+                <textarea 
+                    value={editedExpected} 
+                    onChange={e => setEditedExpected(e.target.value)} 
+                    required 
+                    style={{ width: '95%', minHeight: '40px' }} 
+                />
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+                <label>Keywords (comma-separated):</label><br />
+                <input 
+                    type="text" 
+                    value={editedKeywords} 
+                    onChange={e => setEditedKeywords(e.target.value)} 
+                    style={{ width: '95%' }} 
+                />
+            </div>
+            <button type="submit" disabled={isSaving} style={{ marginRight: '0.5rem' }}>
+                {isSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+            <button type="button" onClick={onCancel} disabled={isSaving}>
+                Cancel
+            </button>
+            {editError && <p style={{ color: 'red', marginTop: '0.5rem' }}>Error: {editError}</p>}
+        </form>
+    );
+};
+
 function AdminPanel() {
     const [questionsData, setQuestionsData] = useState(null); // { subject: [questions] }
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     // State to track which subject's add form is open
     const [addingToSubject, setAddingToSubject] = useState(null); 
+    // State to track which question is being edited
+    const [editingQuestion, setEditingQuestion] = useState(null); // { subject: string, index: number } | null
 
     // Function to fetch all questions
     const fetchAdminQuestions = async () => {
@@ -160,11 +230,30 @@ function AdminPanel() {
         }
     };
 
-    // --- Handlers for Add/Edit/Delete (To be implemented) ---
-    const handleEditQuestion = (subject, index, questionData) => {
-        console.log("TODO: Edit question", subject, index, questionData);
-        // Call PUT /admin/questions/<subject>/<index>
-        // Then call fetchAdminQuestions() to refresh
+    // --- Implement Edit Question Handler ---
+    const handleEditQuestion = async (subject, index, updatedData) => {
+        console.log("Saving edit for", subject, index, updatedData);
+        setError(null);
+        // Loading state is handled within the EditQuestionForm
+        try {
+            const response = await fetch(`http://127.0.0.1:5000/admin/questions/${subject}/${index}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatedData)
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || `HTTP error! status: ${response.status}`);
+            }
+            console.log("Edit success:", result);
+            setEditingQuestion(null); // Close the edit form
+            await fetchAdminQuestions(); // Refresh list
+            alert("Question updated successfully!");
+        } catch (e) {
+            console.error("Failed to update question:", e);
+            setError(`Failed to update question: ${e.message}`);
+            throw e; // Re-throw for the form component
+        }
     };
     
     // --- Render Logic --- 
@@ -183,13 +272,44 @@ function AdminPanel() {
                             <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
                                 {questions.map((q, index) => (
                                     <li key={index} style={{ borderBottom: '1px dashed #eee', marginBottom: '1rem', paddingBottom: '1rem' }}>
-                                        <p><strong>Q{index + 1}:</strong> {q.question}</p>
-                                        <p><strong>Expected:</strong> {q.expected}</p>
-                                        {q.keywords && q.keywords.length > 0 && (
-                                            <p><strong>Keywords:</strong> {q.keywords.join(', ')}</p>
-                                        )}
-                                        <button onClick={() => alert('Edit not implemented yet')} style={{ marginRight: '0.5rem' }}>Edit</button>
-                                        <button onClick={() => handleDeleteQuestion(subject, index)}>Delete</button>
+                                        {
+                                            // Check if this question is being edited
+                                            editingQuestion && editingQuestion.subject === subject && editingQuestion.index === index 
+                                            ? (
+                                                // Render Edit Form
+                                                <EditQuestionForm 
+                                                    subject={subject} 
+                                                    index={index} 
+                                                    questionData={q} 
+                                                    onSave={handleEditQuestion} 
+                                                    onCancel={() => setEditingQuestion(null)} 
+                                                />
+                                            ) 
+                                            : (
+                                                // Render Normal View
+                                                <>
+                                                    <p><strong>Q{index + 1}:</strong> {q.question}</p>
+                                                    <p><strong>Expected:</strong> {q.expected}</p>
+                                                    {q.keywords && q.keywords.length > 0 && (
+                                                        <p><strong>Keywords:</strong> {q.keywords.join(', ')}</p>
+                                                    )}
+                                                    {/* Update Edit Button onClick */}
+                                                    <button 
+                                                        onClick={() => setEditingQuestion({ subject, index })} 
+                                                        disabled={editingQuestion !== null || addingToSubject !== null} // Disable if any form is open
+                                                        style={{ marginRight: '0.5rem' }}
+                                                    >
+                                                        Edit
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDeleteQuestion(subject, index)}
+                                                        disabled={editingQuestion !== null || addingToSubject !== null} // Disable if any form is open
+                                                    >
+                                                        Delete
+                                                    </button>
+                                                </>
+                                            )
+                                        }
                                     </li>
                                 ))}
                             </ul>
@@ -197,7 +317,7 @@ function AdminPanel() {
                             <p>No questions found for this subject.</p>
                         )}
                         
-                        {/* Toggle Add Question Form */} 
+                        {/* Toggle Add Question Form (disable button if editing) */} 
                         {addingToSubject === subject ? (
                             <AddQuestionForm 
                                 subject={subject} 
@@ -205,7 +325,10 @@ function AdminPanel() {
                                 onCancel={() => setAddingToSubject(null)} 
                             />
                         ) : (
-                            <button onClick={() => setAddingToSubject(subject)}>
+                            <button 
+                                onClick={() => setAddingToSubject(subject)}
+                                disabled={editingQuestion !== null || addingToSubject !== null} // Disable if any form is open
+                            >
                                 Add New Question to {subject}
                             </button>
                         )}

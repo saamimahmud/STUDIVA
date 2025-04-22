@@ -43,14 +43,6 @@
   ],
   "DBMS": [
     {
-      "question": "What is normalization?",
-      "expected": "Normalization is the process of organizing data to reduce redundancy.",
-      "keywords": [
-        "organizing data",
-        "reduce redundancy"
-      ]
-    },
-    {
       "question": "Define a primary key.",
       "expected": "A primary key is a unique identifier for a record in a table.",
       "keywords": [
