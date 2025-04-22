@@ -66,11 +66,20 @@ def cleanup_lang_tool():
             print(f"Error closing LanguageTool: {e}")
 
 # Load questions from JSON file
+QUESTION_FILE = 'questions.json'
 try:
-    with open('questions.json', 'r') as f:
+    with open(QUESTION_FILE, 'r') as f:
         all_questions = json.load(f)
 except FileNotFoundError:
     all_questions = {} # Initialize empty if file not found
+
+# Load scenarios from JSON file
+SCENARIO_FILE = 'scenarios.json'
+try:
+    with open(SCENARIO_FILE, 'r') as f:
+        all_scenarios = json.load(f) # Load as a list
+except FileNotFoundError:
+    all_scenarios = [] # Initialize empty list if file not found
 
 # --- Helper function for improved keyword matching ---
 def calculate_keyword_score(student_answer, expected_keywords):
@@ -360,8 +369,6 @@ def transcribe():
                 pass  # File still in use — skip cleanup
 
 # --- Helper Function to Save Questions --- 
-QUESTION_FILE = 'questions.json'
-
 def save_all_questions():
     """Saves the current state of all_questions to the JSON file."""
     try:
@@ -370,6 +377,17 @@ def save_all_questions():
         return True
     except Exception as e:
         print(f"ERROR saving questions to {QUESTION_FILE}: {e}")
+        return False
+
+# --- Helper Function to Save Scenarios --- 
+def save_all_scenarios():
+    """Saves the current state of all_scenarios to the JSON file."""
+    try:
+        with open(SCENARIO_FILE, 'w') as f:
+            json.dump(all_scenarios, f, indent=2) # Use indent=2 for readability
+        return True
+    except Exception as e:
+        print(f"ERROR saving scenarios to {SCENARIO_FILE}: {e}")
         return False
 
 # --- Admin API Endpoints --- 
@@ -456,6 +474,71 @@ def admin_delete_question(subject, question_index):
         else:
             all_questions[subject].insert(question_index, deleted_question) # Put question back
         return jsonify({"error": "Failed to save questions after deletion."}), 500
+
+@app.route('/admin/scenarios', methods=['GET'])
+def admin_get_all_scenarios():
+    """Returns the list of communication scenarios."""
+    return jsonify(list(all_scenarios)) # Return a copy of the list
+
+@app.route('/admin/scenarios', methods=['POST'])
+def admin_add_scenario():
+    """Adds a new scenario to the list."""
+    data = request.get_json()
+    if not data or 'scenario' not in data or not isinstance(data['scenario'], str) or not data['scenario'].strip():
+        return jsonify({"error": "Missing or invalid scenario text"}), 400
+
+    new_scenario = data['scenario'].strip()
+    
+    # Optional: Check for duplicates
+    if new_scenario in all_scenarios:
+         return jsonify({"error": "Scenario already exists"}), 409 # Conflict
+         
+    all_scenarios.append(new_scenario)
+    
+    if save_all_scenarios():
+        return jsonify({"message": "Scenario added successfully", "scenario": new_scenario, "index": len(all_scenarios) - 1}), 201
+    else:
+        all_scenarios.pop() # Rollback
+        return jsonify({"error": "Failed to save scenarios after adding."}), 500
+
+@app.route('/admin/scenarios/<int:scenario_index>', methods=['PUT'])
+def admin_update_scenario(scenario_index):
+    """Updates an existing scenario."""
+    if scenario_index >= len(all_scenarios):
+        return jsonify({"error": "Scenario index not found"}), 404
+
+    data = request.get_json()
+    if not data or 'scenario' not in data or not isinstance(data['scenario'], str) or not data['scenario'].strip():
+        return jsonify({"error": "Missing or invalid scenario text"}), 400
+
+    updated_scenario = data['scenario'].strip()
+    original_scenario = all_scenarios[scenario_index]
+    
+    # Optional: Check for duplicates if changed
+    if updated_scenario != original_scenario and updated_scenario in all_scenarios:
+        return jsonify({"error": "Updated scenario text already exists"}), 409 # Conflict
+
+    all_scenarios[scenario_index] = updated_scenario
+
+    if save_all_scenarios():
+        return jsonify({"message": "Scenario updated successfully", "scenario": updated_scenario}), 200
+    else:
+        all_scenarios[scenario_index] = original_scenario # Rollback
+        return jsonify({"error": "Failed to save scenarios after update."}), 500
+
+@app.route('/admin/scenarios/<int:scenario_index>', methods=['DELETE'])
+def admin_delete_scenario(scenario_index):
+    """Deletes a scenario."""
+    if scenario_index >= len(all_scenarios):
+        return jsonify({"error": "Scenario index not found"}), 404
+        
+    deleted_scenario = all_scenarios.pop(scenario_index)
+
+    if save_all_scenarios():
+        return jsonify({"message": "Scenario deleted successfully"}), 200
+    else:
+        all_scenarios.insert(scenario_index, deleted_scenario) # Rollback
+        return jsonify({"error": "Failed to save scenarios after deletion."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

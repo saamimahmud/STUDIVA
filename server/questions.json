@@ -55,7 +55,9 @@
       "question": "What is the full form of SQL",
       "expected": "The Full form of SQL is Structured Query Language",
       "keywords": [
-        "Structured Query Language"
+        "Structured",
+        "Query",
+        "Language"
       ]
     }
   ]
