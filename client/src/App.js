@@ -4,13 +4,21 @@ import { ReactMediaRecorder } from "react-media-recorder";
 import './App.css';
 // Import the new component
 import CommPracticePanel from './CommPracticePanel';
+// Import Admin Panel
+import AdminPanel from './AdminPanel';
 
-// Remove the placeholder component
-// const CommPracticePanelPlaceholder = () => ( ... );
+// Simple placeholder component for Admin Mode
+// const AdminPanelPlaceholder = () => (
+//   <div>
+//     <h2>Admin Panel</h2>
+//     <p>Manage Viva questions and Communication scenarios.</p>
+//     <p><i>(Admin Panel UI under construction)</i></p>
+//   </div>
+// );
 
 function App() {
   // --- State for Mode Switching ---
-  const [currentMode, setCurrentMode] = useState('viva'); // 'viva' or 'communication'
+  const [currentMode, setCurrentMode] = useState('viva'); // 'viva', 'communication', or 'admin'
 
   // --- State for Viva Mode ---
   const [studentAnswer, setStudentAnswer] = useState('');
@@ -303,14 +311,22 @@ function App() {
           disabled={currentMode === 'viva'}
           style={{ marginRight: '1rem', padding: '0.5rem 1rem' }}
         >
-          Viva Practice / Evaluation
+          Viva Practice
         </button>
         <button
           onClick={() => setCurrentMode('communication')}
           disabled={currentMode === 'communication'}
+          style={{ marginRight: '1rem', padding: '0.5rem 1rem' }}
+        >
+          Communication Practice
+        </button>
+        {/* Add Admin Mode Button */}
+        <button
+          onClick={() => setCurrentMode('admin')}
+          disabled={currentMode === 'admin'}
           style={{ padding: '0.5rem 1rem' }}
         >
-          Classroom Communication Practice
+          Admin Mode
         </button>
       </div>
 
@@ -324,8 +340,16 @@ function App() {
 
       {currentMode === 'communication' && (
         <div>
-          {/* Use the actual CommPracticePanel component */}
+          {/* Render Communication Panel */}
           <CommPracticePanel />
+        </div>
+      )}
+
+      {/* Render Admin Mode */}
+      {currentMode === 'admin' && (
+        <div>
+           {/* Use the actual AdminPanel component */}
+          <AdminPanel /> 
         </div>
       )}
 

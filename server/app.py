@@ -359,6 +359,103 @@ def transcribe():
             except PermissionError:
                 pass  # File still in use — skip cleanup
 
+# --- Helper Function to Save Questions --- 
+QUESTION_FILE = 'questions.json'
+
+def save_all_questions():
+    """Saves the current state of all_questions to the JSON file."""
+    try:
+        with open(QUESTION_FILE, 'w') as f:
+            json.dump(all_questions, f, indent=2) # Use indent=2 for readability
+        return True
+    except Exception as e:
+        print(f"ERROR saving questions to {QUESTION_FILE}: {e}")
+        return False
+
+# --- Admin API Endpoints --- 
+
+@app.route('/admin/questions', methods=['GET'])
+def admin_get_all_questions():
+    """Returns the entire question bank."""
+    # Return a copy to avoid potential modification issues if needed later
+    return jsonify(dict(all_questions))
+
+@app.route('/admin/questions/<subject>', methods=['POST'])
+def admin_add_question(subject):
+    """Adds a new question to a subject."""
+    data = request.get_json()
+    if not data or 'question' not in data or 'expected' not in data:
+        return jsonify({"error": "Missing question data (question, expected fields required)"}), 400
+
+    new_question = {
+        "question": data['question'],
+        "expected": data['expected'],
+        "keywords": data.get('keywords', []) # Keywords are optional
+    }
+
+    if subject not in all_questions:
+        all_questions[subject] = [] # Create subject if it doesn't exist
+        
+    all_questions[subject].append(new_question)
+    
+    if save_all_questions():
+        # Return the added question and its new index
+        return jsonify({"message": "Question added successfully", "question": new_question, "index": len(all_questions[subject]) - 1}), 201
+    else:
+        # Rollback the change in memory if save failed
+        all_questions[subject].pop()
+        if not all_questions[subject]: # Remove subject if it became empty
+            del all_questions[subject]
+        return jsonify({"error": "Failed to save questions after adding."}), 500
+
+@app.route('/admin/questions/<subject>/<int:question_index>', methods=['PUT'])
+def admin_update_question(subject, question_index):
+    """Updates an existing question."""
+    if subject not in all_questions or question_index >= len(all_questions[subject]):
+        return jsonify({"error": "Subject or question index not found"}), 404
+
+    data = request.get_json()
+    if not data or 'question' not in data or 'expected' not in data:
+        return jsonify({"error": "Missing question data (question, expected fields required)"}), 400
+        
+    # Keep the original question in case we need to rollback
+    original_question = dict(all_questions[subject][question_index]) 
+
+    # Update the question in memory
+    all_questions[subject][question_index] = {
+        "question": data['question'],
+        "expected": data['expected'],
+        "keywords": data.get('keywords', original_question.get('keywords', [])) # Keep original keywords if not provided
+    }
+
+    if save_all_questions():
+        return jsonify({"message": "Question updated successfully", "question": all_questions[subject][question_index]}), 200
+    else:
+        # Rollback on save failure
+        all_questions[subject][question_index] = original_question
+        return jsonify({"error": "Failed to save questions after update."}), 500
+
+@app.route('/admin/questions/<subject>/<int:question_index>', methods=['DELETE'])
+def admin_delete_question(subject, question_index):
+    """Deletes a question."""
+    if subject not in all_questions or question_index >= len(all_questions[subject]):
+        return jsonify({"error": "Subject or question index not found"}), 404
+        
+    # Store the question to potentially add back if save fails
+    deleted_question = all_questions[subject].pop(question_index)
+    subject_was_emptied = not all_questions[subject]
+    if subject_was_emptied:
+        del all_questions[subject] # Remove subject key if empty
+
+    if save_all_questions():
+        return jsonify({"message": "Question deleted successfully"}), 200
+    else:
+        # Rollback on save failure
+        if subject_was_emptied:
+             all_questions[subject] = [deleted_question] # Recreate subject list
+        else:
+            all_questions[subject].insert(question_index, deleted_question) # Put question back
+        return jsonify({"error": "Failed to save questions after deletion."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
