@@ -1,0 +1,32 @@
+{
+    "subject": "AI",
+    "mode": "sequential",
+    "results": [
+        {
+            "question": "What is Artificial Intelligence?",
+            "expected": "Artificial Intelligence is the simulation of human intelligence in machines.",
+            "answer": " Artificial intelligence is a field of computer science in which we make neural networks and intelligent systems that can mimic the behavior of the human brain, that is the reasoning and critical thinking.",
+            "similarity_score": 76.65,
+            "keyword_score": 33.33,
+            "fluency_score": 29.52,
+            "feedback": "Good attempt. You covered the main idea. Check if you used all the key terms.",
+            "confidence": "Medium"
+        },
+        {
+            "question": "What is a neural network?",
+            "expected": "A neural network is a series of algorithms that mimic the operations of a human brain to recognize relationships in data.",
+            "answer": " Neural Network is a network that is just like the Neural Network of the Human Thread. It is part of the additional intelligence and neural networks are composed of neurons and neurons compute and decide to make the neural network intelligently. This life, how a human being works, this is what Neural Network does. It makes the human be here.",
+            "similarity_score": 70.9,
+            "keyword_score": 0,
+            "fluency_score": 64.71,
+            "feedback": "Good attempt. You covered the main idea. Check if you used all the key terms.",
+            "confidence": "Medium"
+        }
+    ],
+    "summary": {
+        "averageSimilarityScore": "73.78",
+        "averageKeywordScore": "16.66",
+        "averageFluencyScore": "47.11",
+        "totalQuestions": 2
+    }
+}

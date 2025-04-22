@@ -1,0 +1,21 @@
+# Node dependencies
+node_modules/
+
+# Python virtual environment
+/server/venv/
+/server/.venv/
+/server/env/
+/server/.env/
+/server/virtualenv/
+/server/venv.bak/
+/server/.venv.bak/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS generated files
+.DS_Store
+Thumbs.db 
