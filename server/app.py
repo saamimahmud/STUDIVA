@@ -17,9 +17,30 @@ from nltk.tokenize import word_tokenize
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import language_tool_python
 import atexit # Import atexit
+import firebase_admin # Add Firebase import
+from firebase_admin import credentials, firestore, auth # Add specific imports
+import uuid
+from functools import wraps # For decorator
+from bert_score import score as bert_score_calculate # Import BERTScore
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM # Import for Flan-T5
+import spacy # Import spaCy
 
 app = Flask(__name__)
 CORS(app)
+
+# --- Initialize Firebase Admin SDK ---
+SERVICE_ACCOUNT_KEY_PATH = "D:/BTECH CSE AI/6th Sem/Minor project/Key(Firebase)/studiva-42676-firebase-adminsdk-fbsvc-75965200c7.json"
+print(f"Initializing Firebase with key: {SERVICE_ACCOUNT_KEY_PATH}")
+try:
+    cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("Firebase Initialized Successfully.")
+except Exception as e:
+    print(f"CRITICAL: Failed to initialize Firebase Admin SDK: {e}")
+    db = None # Set db to None if initialization fails
+    # Consider exiting if Firebase is essential
+    # exit(1)
 
 # Download NLTK data (if not already downloaded)
 def download_nltk_resource(resource_id, resource_path):
@@ -41,8 +62,39 @@ stop_words = set(stopwords.words('english'))
 sia = SentimentIntensityAnalyzer()
 
 # Load models and questions once during startup
+print("Loading Sentence Transformer model...")
 model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+print("Sentence Transformer model loaded.")
+
+print("Loading Whisper model...")
 whisper_model = whisper.load_model("base")
+print("Whisper model loaded.")
+
+# Load Flan-T5 model and tokenizer
+flan_model_name = "google/flan-t5-base"
+flan_tokenizer = None
+flan_model = None
+try:
+    print(f"Loading Flan-T5 tokenizer: {flan_model_name}...")
+    flan_tokenizer = AutoTokenizer.from_pretrained(flan_model_name)
+    print(f"Loading Flan-T5 model: {flan_model_name}...")
+    flan_model = AutoModelForSeq2SeqLM.from_pretrained(flan_model_name)
+    print("Flan-T5 model and tokenizer loaded successfully.")
+except Exception as e:
+    print(f"CRITICAL: Failed to load Flan-T5 model/tokenizer: {e}")
+    # Depending on requirements, might want to exit or disable features
+    # flan_tokenizer = None
+    # flan_model = None 
+
+# Load spaCy model
+nlp_spacy = None
+try:
+    print("Loading spaCy model (en_core_web_sm)...")
+    nlp_spacy = spacy.load("en_core_web_sm")
+    print("spaCy model loaded successfully.")
+except Exception as e:
+    print(f"WARNING: Failed to load spaCy model: {e}")
+    # Features relying on spaCy might be disabled
 
 # Initialize LanguageTool globally
 lang_tool = None
@@ -81,51 +133,145 @@ try:
 except FileNotFoundError:
     all_scenarios = [] # Initialize empty list if file not found
 
-# --- Helper function for improved keyword matching ---
-def calculate_keyword_score(student_answer, expected_keywords):
+# --- Helper function for improved keyword matching (USING SPACY) ---
+def calculate_keyword_score_spacy(student_answer, expected_keywords):
     if not expected_keywords:
-        return 100.0 # Or 0.0, depending on desired behavior
+        return 100.0
+    if not nlp_spacy: # Check if spaCy model loaded
+        print("WARNING: spaCy model not loaded, skipping keyword scoring.")
+        return 0.0 # Or handle appropriately
 
-    # Tokenize and stem student answer (remove stopwords)
-    answer_tokens = word_tokenize(student_answer.lower())
-    answer_stems = {stemmer.stem(token) for token in answer_tokens if token.isalnum() and token not in stop_words}
+    try:
+        # Process student answer
+        doc_answer = nlp_spacy(student_answer.lower())
+        answer_lemmas = {token.lemma_ for token in doc_answer if not token.is_stop and not token.is_punct}
+        
+        found_keywords_count = 0
+        for keyword_phrase in expected_keywords:
+            # Process keyword phrase
+            doc_keyword = nlp_spacy(keyword_phrase.lower())
+            keyword_lemmas = {token.lemma_ for token in doc_keyword if not token.is_punct}
+            
+            # Check if all keyword lemmas are present in the answer lemmas
+            if keyword_lemmas.issubset(answer_lemmas):
+                found_keywords_count += 1
+                
+        return round((found_keywords_count / len(expected_keywords)) * 100, 2)
+    except Exception as e:
+        print(f"Error during spaCy keyword scoring: {e}")
+        return 0.0 # Return 0 score on error
+# --- End Helper Function (spaCy) ---
 
-    found_keywords_count = 0
-    for keyword_phrase in expected_keywords:
-        # Tokenize and stem the keyword phrase
-        keyword_tokens = word_tokenize(keyword_phrase.lower())
-        keyword_stems = {stemmer.stem(token) for token in keyword_tokens if token.isalnum()} # Keep all keyword tokens
+# --- Helper function for Concept Matching ---
+def calculate_concept_match_score(student_answer, expected_answer):
+    if not nlp_spacy or not model: # Check if models are loaded
+        print("WARNING: spaCy or Sentence Transformer model not loaded, skipping concept matching.")
+        return 0.0
 
-        # Check if all stems of the keyword phrase are in the answer stems
-        if keyword_stems.issubset(answer_stems):
-            found_keywords_count += 1
+    try:
+        doc_student = nlp_spacy(student_answer)
+        doc_expected = nlp_spacy(expected_answer)
 
-    return round((found_keywords_count / len(expected_keywords)) * 100, 2)
-# --- End Helper Function ---
+        student_chunks = [chunk.text for chunk in doc_student.noun_chunks]
+        expected_chunks = [chunk.text for chunk in doc_expected.noun_chunks]
+
+        if not student_chunks or not expected_chunks:
+            # If either text has no noun chunks, concept match is poor
+            return 0.0 
+
+        # Encode the noun chunks
+        student_embeddings = model.encode(student_chunks)
+        expected_embeddings = model.encode(expected_chunks)
+
+        # Calculate cosine similarity between all pairs
+        similarity_matrix = cosine_similarity(student_embeddings, expected_embeddings)
+
+        # Find the best match for each student chunk in the expected chunks
+        # and average these best scores
+        avg_max_similarity = similarity_matrix.max(axis=1).mean()
+        
+        # Alternative: Could also calculate the reverse (best match for expected in student)
+        # avg_max_similarity_rev = similarity_matrix.max(axis=0).mean()
+        # Combine them? e.g., (avg_max_similarity + avg_max_similarity_rev) / 2
+
+        return round(float(avg_max_similarity) * 100, 2)
+
+    except Exception as e:
+        print(f"Error during concept matching: {e}")
+        return 0.0
+# --- End Helper Function (Concept Match) ---
+
+# --- Authentication Decorator --- 
+def check_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({"error": "Authorization header missing or invalid"}), 401
+
+        id_token = auth_header.split('Bearer ')[1]
+        try:
+            # Verify the ID token while checking if the token is revoked.
+            decoded_token = auth.verify_id_token(id_token)
+            
+            # --- AUTHORIZATION CHECK --- 
+            # Check for teacher custom claim
+            if not decoded_token.get('teacher') == True:
+                 print(f"Authorization failed: User {decoded_token.get('uid')} is not a teacher.")
+                 return jsonify({"error": "Forbidden: User does not have teacher privileges"}), 403
+            
+            # Add user info to request context if needed by route (optional)
+            # g.user = decoded_token 
+            print(f"Authorized teacher access: {decoded_token.get('uid')}")
+            
+        except auth.InvalidIdTokenError as e:
+            print(f"Token verification failed: {e}")
+            return jsonify({"error": "Invalid authentication token"}), 401
+        except Exception as e:
+            print(f"Error during token verification: {e}")
+            return jsonify({"error": "Authentication error"}), 500
+
+        return f(*args, **kwargs)
+    return decorated_function
 
 @app.route('/questions', methods=['GET'])
 def get_questions():
-    subject = request.args.get('subject')
-    mode = request.args.get('mode', 'sequential') # Default to sequential
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
 
-    if not subject or subject not in all_questions:
-        return jsonify({"error": "Subject not found or not specified"}), 404
+    subject_param = request.args.get('subject')
+    mode = request.args.get('mode', 'sequential') # Default to sequential if not provided
 
-    questions_for_subject = all_questions[subject]
+    if not subject_param:
+        return jsonify({"error": "Missing 'subject' query parameter"}), 400
 
-    # Handle different modes (placeholder for custom/uploaded logic)
-    if mode == 'random':
-        random.shuffle(questions_for_subject)
-    elif mode == 'custom':
-        # Placeholder: In future, filter for custom questions or fetch from DB
-        pass
-    elif mode == 'uploaded':
-        # Placeholder: In future, fetch teacher-uploaded questions
-        pass
-    # Default is sequential (as loaded from file)
+    try:
+        questions_ref = db.collection('vivaQuestions')
+        # Query for the document where the 'subject' field matches the parameter
+        query = questions_ref.where('subject', '==', subject_param).limit(1)
+        docs = query.stream()
 
-    return jsonify(questions_for_subject)
+        subject_doc = next(docs, None) # Get the first document or None
 
+        if subject_doc:
+            data = subject_doc.to_dict()
+            questions = data.get('questions', [])
+            
+            # Handle mode
+            if mode == 'random':
+                random.shuffle(questions)
+                # Optionally limit the number of random questions, e.g.:
+                # questions = questions[:10] # Get first 10 random questions
+            # Add other modes like 'sequential' (default, no shuffling needed) or 'all' if required
+            
+            return jsonify(questions) # Return the array of question objects
+        else:
+            print(f"No questions found for subject: {subject_param}")
+            return jsonify([]), 200 # Return empty list if subject not found, not an error for the client
+
+    except Exception as e:
+        print(f"Error fetching questions for subject '{subject_param}' from Firestore: {e}")
+        return jsonify({"error": f"Failed to fetch questions from Firestore: {e}"}), 500
 
 @app.route('/evaluate', methods=['POST'])
 def evaluate():
@@ -137,46 +283,269 @@ def evaluate():
     if not student_answer or not expected_answer:
         return jsonify({"error": "Missing answer or expected response"}), 400
 
-    # 1. Semantic Similarity (existing logic)
+    # 1. Semantic Similarity (existing - Cosine)
     embeddings = model.encode([student_answer, expected_answer])
-    similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
-    similarity_score = round(similarity * 100, 2)
+    cosine_sim = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
+    similarity_score = round(cosine_sim * 100, 2)
 
-    # 2. Improved Keyword Matching (using helper function)
-    keyword_score = calculate_keyword_score(student_answer, expected_keywords)
+    # 2. BERTScore (New)
+    try:
+        # Calculate BERTScore
+        # lang="en" is default, specify if needed. Using default model.
+        # verbose=True prints progress.
+        P, R, F1 = bert_score_calculate([student_answer], [expected_answer], lang="en", verbose=False)
+        # F1 is a tensor, get the float value
+        bert_f1_score = round(F1.item() * 100, 2) 
+    except Exception as e:
+        print(f"Error calculating BERTScore: {e}")
+        bert_f1_score = 0 # Default to 0 on error
 
-    # 3. Fluency/Coherence Score (Flesch Reading Ease)
+    # 3. Keyword Matching (using SPAcY helper function)
+    keyword_score = calculate_keyword_score_spacy(student_answer, expected_keywords)
+
+    # 4. Concept Matching (New)
+    concept_match_score = calculate_concept_match_score(student_answer, expected_answer)
+
+    # 5. Fluency/Coherence Score (Flesch Reading Ease)
     try:
         fluency_score = textstat.flesch_reading_ease(student_answer)
     except Exception:
-         # Handle cases with very short text or errors during calculation
-        fluency_score = 0 # Assign a default/neutral score
+        fluency_score = 0 
+        
+    # 6. LLM Evaluation (Flan-T5)
+    llm_evaluation_text = "Not available"
+    llm_confidence = "N/A"
+    llm_reasoning = "No reasoning provided." # Initialize reasoning field
+    if flan_model and flan_tokenizer: # Check if model loaded successfully
+        try:
+            # --- Define a SIMPLER prompt for Flan-T5 ---
+            prompt = f"""Evaluate the student's answer compared to the expected answer.
 
-    # --- Feedback Generation (can be further refined based on new scores) ---
-    # Existing logic based on similarity_score remains for now
-    if similarity_score > 85:
-        feedback = "Excellent! Your answer closely matches the expected response and uses relevant keywords."
+Expected Answer: "{expected_answer}"
+Student Answer: "{student_answer}"
+
+Please provide your reasoning, then state if the student's answer is Correct, Partially Correct, or Incorrect, and finally give a confidence level (High, Medium, Low).
+
+Reasoning:
+[Your reasoning here]
+
+Evaluation:
+[Correct/Partially Correct/Incorrect]
+
+Confidence:
+[High/Medium/Low]
+"""
+            # ---------------------------------------------
+
+            # Tokenize and generate
+            input_ids = flan_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True).input_ids 
+            # Adjust generation parameters (max_length for output, num_beams, etc.)
+            outputs = flan_model.generate(
+                input_ids, 
+                max_length=250,  # Increase max length for reasoning
+                num_beams=4,     # Use beam search for potentially better results
+                early_stopping=True
+            ) 
+            llm_output_text = flan_tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            # --- DEBUG: Print the raw output from the LLM --- 
+            print("-" * 20) # Separator
+            print(f"DEBUG: Raw LLM Output:\n{llm_output_text}")
+            print("-" * 20) # Separator
+            # --------------------------------------------------
+
+            # --- Parse Reasoning, Evaluation, and Confidence (Improved Robustness) --- 
+            reasoning_part = llm_output_text # Default to full output
+            evaluation_part = "Not specified"
+            confidence_part = "Not specified"
+
+            try:
+                # Use lower case for case-insensitive matching
+                output_lower = llm_output_text.lower()
+                reasoning_marker_lower = "reasoning:"
+                eval_marker_lower = "\nfinal evaluation:" # Look for newline
+                alt_eval_marker_lower = "evaluation:" # Alternative marker
+                conf_marker_lower = "\nconfidence:" # Look for newline
+
+                eval_marker_pos = output_lower.find(eval_marker_lower)
+                # If standard marker not found, try alternative
+                if eval_marker_pos == -1:
+                    eval_marker_pos = output_lower.find(alt_eval_marker_lower)
+                    # Adjust marker length if alternative was found
+                    eval_marker_len = len(alt_eval_marker_lower) if eval_marker_pos != -1 else 0
+                else:
+                    eval_marker_len = len(eval_marker_lower)
+
+                conf_marker_pos = output_lower.find(conf_marker_lower)
+                reasoning_marker_pos = output_lower.find(reasoning_marker_lower)
+
+                # --- Extract Parts based on found markers ---
+                if eval_marker_pos != -1:
+                    # Extract Reasoning (if marker exists before evaluation)
+                    if reasoning_marker_pos != -1 and reasoning_marker_pos < eval_marker_pos:
+                         reasoning_part = llm_output_text[reasoning_marker_pos + len(reasoning_marker_lower):eval_marker_pos].strip()
+                    else: # Otherwise, take everything before evaluation as reasoning
+                         reasoning_part = llm_output_text[:eval_marker_pos].strip()
+                    
+                    # Extract Evaluation and Confidence
+                    evaluation_and_conf = llm_output_text[eval_marker_pos + eval_marker_len:].strip()
+                    
+                    if conf_marker_pos != -1 and conf_marker_pos > eval_marker_pos: # Ensure confidence marker is *after* eval marker
+                        # Calculate relative position of confidence marker within the remaining string
+                        relative_conf_pos = output_lower.find(conf_marker_lower, eval_marker_pos)
+                        if relative_conf_pos != -1:
+                            eval_end_index = relative_conf_pos - eval_marker_pos - eval_marker_len # Adjust index based on start of substring
+                            evaluation_part = evaluation_and_conf[:eval_end_index].strip()
+                            confidence_part = evaluation_and_conf[eval_end_index + len(conf_marker_lower):].strip()
+                        else: # Should not happen if conf_marker_pos was found, but as fallback:
+                            evaluation_part = evaluation_and_conf
+                            confidence_part = "Not specified (parse issue)"
+                    else:
+                        # No confidence marker found after evaluation, take whole remaining part as evaluation
+                        evaluation_part = evaluation_and_conf
+                        confidence_part = "Not specified"
+                        
+                else: 
+                    # No Evaluation marker found - less structured output
+                    # Try to find confidence marker anyway
+                    if conf_marker_pos != -1:
+                         reasoning_part = llm_output_text[:conf_marker_pos].strip()
+                         confidence_part = llm_output_text[conf_marker_pos + len(conf_marker_lower):].strip()
+                         # Assume the reasoning part might contain the evaluation if no marker found
+                         if "correct" in reasoning_part.lower(): evaluation_part = "Potentially Correct (check reasoning)"
+                         elif "incorrect" in reasoning_part.lower(): evaluation_part = "Potentially Incorrect (check reasoning)"
+                    else:
+                         # No markers found, treat whole output as reasoning
+                         reasoning_part = llm_output_text.strip()
+                         # Simple keyword check for evaluation as a last resort
+                         if "partially correct" in output_lower: evaluation_part = "Partially Correct (inferred)"
+                         elif "correct" in output_lower: evaluation_part = "Correct (inferred)"
+                         elif "incorrect" in output_lower: evaluation_part = "Incorrect (inferred)"
+                         confidence_part = "Not specified"
+
+            except Exception as parse_ex:
+                print(f"Warning: Could not parse Flan-T5 output structure: {parse_ex}")
+                # Fallback: keep full output as reasoning, evaluation/confidence as error
+                reasoning_part = llm_output_text.strip() 
+                evaluation_part = "Parse Error"
+                confidence_part = "Parse Error"
+
+            # Assign parsed parts (or defaults/fallbacks)
+            llm_reasoning = reasoning_part if reasoning_part else "No reasoning generated."
+            llm_evaluation_text = evaluation_part if evaluation_part else "Not specified"
+            llm_confidence = confidence_part if confidence_part else "Not specified"
+            # -----------------------------------------------------
+
+        except Exception as e:
+            print(f"Error during Flan-T5 evaluation: {e}")
+            llm_reasoning = "Error during LLM reasoning generation."
+            llm_evaluation_text = "Error during LLM evaluation."
+            llm_confidence = "Error"
+
+    # --- Feedback Generation (Refined based on multiple scores) ---
+    feedback_parts = []
+    confidence = "Medium" # Default confidence
+
+    # Define thresholds (adjust as needed)
+    sim_threshold_high = 80
+    sim_threshold_med = 60
+    bert_threshold_high = 75
+    bert_threshold_med = 60
+    keyword_threshold_high = 70
+    keyword_threshold_med = 40
+    concept_threshold_high = 65
+    concept_threshold_med = 40
+    fluency_threshold_good = 60 # Flesch Reading Ease score
+    fluency_threshold_ok = 40
+
+    # --- Core Content Evaluation ---
+    if similarity_score >= sim_threshold_high and bert_f1_score >= bert_threshold_high and concept_match_score >= concept_threshold_high:
+        feedback_parts.append("Excellent! Your answer demonstrates a strong understanding of the core concepts and matches the expected response well.")
         confidence = "High"
-    elif similarity_score > 60:
-        feedback = "Good attempt. You covered the main idea. Check if you used all the key terms."
+        # Check keywords specifically for excellent answers
+        if keyword_score < keyword_threshold_high:
+             feedback_parts.append("Consider incorporating more specific keywords to make it even stronger.")
+
+    elif similarity_score >= sim_threshold_med or bert_f1_score >= bert_threshold_med or concept_match_score >= concept_threshold_med:
+        feedback_parts.append("Good attempt. Your answer covers some of the main points.")
         confidence = "Medium"
-    elif similarity_score > 40:
-        feedback = "Some relevant parts, but the answer needs improvement in clarity and keyword usage."
-        confidence = "Low"
+        # Provide more specific feedback for 'Good' attempts
+        if concept_match_score < concept_threshold_med and similarity_score >= sim_threshold_med:
+             feedback_parts.append("While the overall meaning is similar, focus on including the key underlying concepts more explicitly.")
+        elif keyword_score < keyword_threshold_med:
+             feedback_parts.append("Try to use more of the relevant keywords associated with this topic.")
+        elif similarity_score < sim_threshold_med and bert_f1_score < bert_threshold_med:
+             feedback_parts.append("Review the core ideas; the semantic match could be stronger.")
+             
     else:
-        feedback = "The answer is mostly incorrect or irrelevant. Please review the topic."
-        confidence = "Very Low"
-    # You could add more nuanced feedback based on combinations of similarity, keyword, and fluency scores here.
-    # Example: if similarity_score > 60 and keyword_score < 50: feedback += " Try to incorporate more keywords."
-    # Example: if fluency_score < 50: feedback += " Consider rephrasing for better clarity."
-    # --- End Feedback Generation ---
+        feedback_parts.append("Your answer seems to diverge significantly from the expected response or misses key aspects.")
+        confidence = "Low"
+        if keyword_score >= keyword_threshold_med:
+            feedback_parts.append("You used some relevant terms, but the overall explanation needs revision.")
+        else:
+             feedback_parts.append("Focus on understanding the fundamental concepts and associated keywords for this topic.")
+
+    # --- Fluency Feedback ---
+    if fluency_score < fluency_threshold_ok:
+        feedback_parts.append("Additionally, the clarity and sentence structure could be improved for better readability.")
+        # Lower confidence slightly if fluency is very low, regardless of content score
+        if confidence == "High": confidence = "Medium"
+        elif confidence == "Medium": confidence = "Low"
+    elif fluency_score < fluency_threshold_good:
+         feedback_parts.append("Consider refining sentence structure for improved fluency.")
+
+    # --- Combine Feedback --- 
+    feedback = " ".join(feedback_parts) # Join parts with spaces
+
+    # --- Confidence fallback (if somehow missed) ---
+    if confidence is None:
+       if similarity_score > 70 or bert_f1_score > 70: confidence = "Medium"
+       else: confidence = "Low"
+       
+    # --- End Refined Feedback Generation ---
+    
+    # --- Calculate Overall Weighted Score ---
+    overall_score = 0.0
+    weights = {
+        'similarity': 0.20,
+        'bert': 0.30,
+        'keywords': 0.15,
+        'concepts': 0.25,
+        'fluency': 0.10
+    }
+    
+    # Ensure scores are valid numbers (default to 0 if not)
+    sim_val = similarity_score if isinstance(similarity_score, (int, float)) else 0
+    bert_val = bert_f1_score if isinstance(bert_f1_score, (int, float)) else 0
+    key_val = keyword_score if isinstance(keyword_score, (int, float)) else 0
+    con_val = concept_match_score if isinstance(concept_match_score, (int, float)) else 0
+    # Normalize/Cap fluency score? For now, use directly (0-100 range assumed)
+    flu_val = fluency_score if isinstance(fluency_score, (int, float)) else 0
+    # Clamp fluency score to 0-100 range just in case textstat gives odd values
+    flu_val = max(0, min(100, flu_val)) 
+
+    overall_score = (
+        sim_val * weights['similarity'] +
+        bert_val * weights['bert'] +
+        key_val * weights['keywords'] +
+        con_val * weights['concepts'] +
+        flu_val * weights['fluency']
+    )
+    overall_score = round(overall_score, 2) # Round to 2 decimal places
+    # --- End Overall Score Calculation ---
 
     return jsonify({
-        "similarity_score": similarity_score,
-        "keyword_score": keyword_score,
-        "fluency_score": fluency_score, # Add fluency score
-        "feedback": feedback,
-        "confidence": confidence
+        "similarity_score": similarity_score, 
+        "bert_f1_score": bert_f1_score,      
+        "llm_evaluation": llm_evaluation_text, 
+        "llm_reasoning": llm_reasoning,        
+        "llm_confidence": llm_confidence,    
+        "keyword_score": keyword_score, 
+        "concept_match_score": concept_match_score, 
+        "fluency_score": fluency_score, 
+        "overall_score": overall_score, # NEW: Add the overall score
+        "feedback": feedback, 
+        "confidence": confidence 
     })
 
 
@@ -326,21 +695,34 @@ def evaluate_communication():
 
 @app.route('/save_session', methods=['POST'])
 def save_session():
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+        
     session_data = request.get_json()
 
-    # Create folder if not exists
-    os.makedirs('saved_sessions', exist_ok=True)
+    # Basic validation: Check if essential keys exist (adjust as needed)
+    if not session_data or not all(k in session_data for k in ['subject', 'mode', 'results', 'summary']):
+        return jsonify({"error": "Missing required session data fields"}), 400
 
-    # Use timestamp for unique filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"saved_sessions/session_{timestamp}.json"
+    try:
+        # Add a server timestamp for when the session was saved
+        session_data['createdAt'] = firestore.SERVER_TIMESTAMP 
 
-    with open(filename, 'w') as f:
-        json.dump(session_data, f, indent=4)
+        # Reference the collection (will be created if it doesn't exist)
+        sessions_ref = db.collection('savedSessions')
+        
+        # Add the session data as a new document with an auto-generated ID
+        update_time, doc_ref = sessions_ref.add(session_data)
+        
+        session_id = doc_ref.id
+        print(f"Saved session with ID: {session_id}")
+        
+        # Return success message and the ID of the saved session
+        return jsonify({"message": "Session saved successfully to Firestore", "sessionId": session_id}), 201
 
-    return jsonify({"message": "Session saved successfully", "filename": filename})
-
-
+    except Exception as e:
+        print(f"Error saving session to Firestore: {e}")
+        return jsonify({"error": f"Failed to save session: {e}"}), 500
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
@@ -368,177 +750,411 @@ def transcribe():
             except PermissionError:
                 pass  # File still in use — skip cleanup
 
-# --- Helper Function to Save Questions --- 
-def save_all_questions():
-    """Saves the current state of all_questions to the JSON file."""
-    try:
-        with open(QUESTION_FILE, 'w') as f:
-            json.dump(all_questions, f, indent=2) # Use indent=2 for readability
-        return True
-    except Exception as e:
-        print(f"ERROR saving questions to {QUESTION_FILE}: {e}")
-        return False
-
-# --- Helper Function to Save Scenarios --- 
-def save_all_scenarios():
-    """Saves the current state of all_scenarios to the JSON file."""
-    try:
-        with open(SCENARIO_FILE, 'w') as f:
-            json.dump(all_scenarios, f, indent=2) # Use indent=2 for readability
-        return True
-    except Exception as e:
-        print(f"ERROR saving scenarios to {SCENARIO_FILE}: {e}")
-        return False
-
-# --- Admin API Endpoints --- 
+# --- Admin API Endpoints (Apply @check_auth decorator) --- 
 
 @app.route('/admin/questions', methods=['GET'])
+@check_auth # Apply decorator
 def admin_get_all_questions():
-    """Returns the entire question bank."""
-    # Return a copy to avoid potential modification issues if needed later
-    return jsonify(dict(all_questions))
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
 
-@app.route('/admin/questions/<subject>', methods=['POST'])
-def admin_add_question(subject):
-    """Adds a new question to a subject."""
-    data = request.get_json()
-    if not data or 'question' not in data or 'expected' not in data:
-        return jsonify({"error": "Missing question data (question, expected fields required)"}), 400
+    try:
+        questions_ref = db.collection('vivaQuestions')
+        docs = questions_ref.stream()
 
-    new_question = {
-        "question": data['question'],
-        "expected": data['expected'],
-        "keywords": data.get('keywords', []) # Keywords are optional
-    }
-
-    if subject not in all_questions:
-        all_questions[subject] = [] # Create subject if it doesn't exist
+        # Change structure to list of objects {id, subject, questions}
+        all_subjects_data = [] 
+        for doc in docs:
+            data = doc.to_dict()
+            subject_name = data.get('subject')
+            questions_list = data.get('questions', [])
+            
+            # Ensure questions have unique IDs if needed for PUT/DELETE later
+            # For now, we assume array index is sufficient for frontend identification initially
+            # but this might need refinement.
+            
+            if subject_name:
+                all_subjects_data.append({
+                    'id': doc.id, # Include the document ID
+                    'subject': subject_name,
+                    'questions': questions_list
+                })
         
-    all_questions[subject].append(new_question)
-    
-    if save_all_questions():
-        # Return the added question and its new index
-        return jsonify({"message": "Question added successfully", "question": new_question, "index": len(all_questions[subject]) - 1}), 201
-    else:
-        # Rollback the change in memory if save failed
-        all_questions[subject].pop()
-        if not all_questions[subject]: # Remove subject if it became empty
-            del all_questions[subject]
-        return jsonify({"error": "Failed to save questions after adding."}), 500
+        return jsonify(all_subjects_data) # Return the list of subject objects
 
-@app.route('/admin/questions/<subject>/<int:question_index>', methods=['PUT'])
-def admin_update_question(subject, question_index):
-    """Updates an existing question."""
-    if subject not in all_questions or question_index >= len(all_questions[subject]):
-        return jsonify({"error": "Subject or question index not found"}), 404
+    except Exception as e:
+        print(f"Error fetching questions from Firestore: {e}")
+        return jsonify({"error": f"Failed to fetch questions from Firestore: {e}"}), 500
 
-    data = request.get_json()
-    if not data or 'question' not in data or 'expected' not in data:
-        return jsonify({"error": "Missing question data (question, expected fields required)"}), 400
+@app.route('/admin/questions/<subject_id>', methods=['POST'])
+@check_auth # Apply decorator
+def admin_add_question(subject_id):
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    if not subject_id:
+        return jsonify({"error": "Missing subject_id parameter"}), 400
+
+    try:
+        data = request.get_json()
+        # Validate incoming question data
+        question_text = data.get('question')
+        expected_text = data.get('expected')
+        keywords_list = data.get('keywords', [])
+
+        if not all([question_text, expected_text]) or not isinstance(question_text, str) or not isinstance(expected_text, str):
+            return jsonify({"error": "Invalid or missing 'question' or 'expected' text"}), 400
+        if not isinstance(keywords_list, list):
+             return jsonify({"error": "Invalid 'keywords' format, must be an array"}), 400
         
-    # Keep the original question in case we need to rollback
-    original_question = dict(all_questions[subject][question_index]) 
+        valid_keywords = [str(k).strip() for k in keywords_list if isinstance(k, (str, int, float)) and str(k).strip()]
 
-    # Update the question in memory
-    all_questions[subject][question_index] = {
-        "question": data['question'],
-        "expected": data['expected'],
-        "keywords": data.get('keywords', original_question.get('keywords', [])) # Keep original keywords if not provided
-    }
+        # Add unique ID using uuid
+        new_question_object = {
+            'id': str(uuid.uuid4()), # Generate and add unique ID
+            'question': question_text.strip(),
+            'expected': expected_text.strip(),
+            'keywords': valid_keywords
+        }
 
-    if save_all_questions():
-        return jsonify({"message": "Question updated successfully", "question": all_questions[subject][question_index]}), 200
-    else:
-        # Rollback on save failure
-        all_questions[subject][question_index] = original_question
-        return jsonify({"error": "Failed to save questions after update."}), 500
+        doc_ref = db.collection('vivaQuestions').document(subject_id)
 
-@app.route('/admin/questions/<subject>/<int:question_index>', methods=['DELETE'])
-def admin_delete_question(subject, question_index):
-    """Deletes a question."""
-    if subject not in all_questions or question_index >= len(all_questions[subject]):
-        return jsonify({"error": "Subject or question index not found"}), 404
+        # Atomically add the new question object to the 'questions' array
+        doc_ref.update({
+            'questions': firestore.ArrayUnion([new_question_object])
+        })
         
-    # Store the question to potentially add back if save fails
-    deleted_question = all_questions[subject].pop(question_index)
-    subject_was_emptied = not all_questions[subject]
-    if subject_was_emptied:
-        del all_questions[subject] # Remove subject key if empty
+        print(f"Added question to subject ID: {subject_id} (Question ID: {new_question_object['id']})")
+        # Return success message and the new question object (including its new ID)
+        return jsonify(new_question_object), 201 
 
-    if save_all_questions():
-        return jsonify({"message": "Question deleted successfully"}), 200
-    else:
-        # Rollback on save failure
-        if subject_was_emptied:
-             all_questions[subject] = [deleted_question] # Recreate subject list
-        else:
-            all_questions[subject].insert(question_index, deleted_question) # Put question back
-        return jsonify({"error": "Failed to save questions after deletion."}), 500
+    except Exception as e:
+        print(f"Error adding question to subject {subject_id} in Firestore: {e}")
+        return jsonify({"error": f"Failed to add question: {e}"}), 500
+
+@app.route('/admin/questions/<subject_id>/<question_id>', methods=['PUT'])
+@check_auth # Apply decorator
+def admin_update_question(subject_id, question_id):
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    if not subject_id or not question_id:
+        return jsonify({"error": "Missing subject_id or question_id parameter"}), 400
+
+    try:
+        # Get updated data from request body
+        data = request.get_json()
+        question_text = data.get('question')
+        expected_text = data.get('expected')
+        keywords_list = data.get('keywords') # Allow empty list
+
+        # Validate incoming data
+        if not all([question_text, expected_text]) or not isinstance(question_text, str) or not isinstance(expected_text, str):
+            return jsonify({"error": "Invalid or missing 'question' or 'expected' text"}), 400
+        if keywords_list is None or not isinstance(keywords_list, list):
+             return jsonify({"error": "Invalid 'keywords' format, must be an array (can be empty)"}), 400
+        
+        valid_keywords = [str(k).strip() for k in keywords_list if isinstance(k, (str, int, float)) and str(k).strip()]
+
+        # --- Update logic --- 
+        doc_ref = db.collection('vivaQuestions').document(subject_id)
+        doc_snapshot = doc_ref.get()
+
+        if not doc_snapshot.exists:
+            return jsonify({"error": f"Subject document with ID {subject_id} not found"}), 404
+
+        subject_data = doc_snapshot.to_dict()
+        questions_array = subject_data.get('questions', [])
+        updated_questions_array = []
+        question_found = False
+
+        # Iterate and rebuild the array
+        for question in questions_array:
+            if isinstance(question, dict) and question.get('id') == question_id:
+                # Found the question, update its content but keep the ID
+                updated_question = {
+                    'id': question_id, # Keep original ID
+                    'question': question_text.strip(),
+                    'expected': expected_text.strip(),
+                    'keywords': valid_keywords
+                }
+                updated_questions_array.append(updated_question)
+                question_found = True
+            else:
+                # Keep other questions as they are
+                updated_questions_array.append(question)
+
+        if not question_found:
+            return jsonify({"error": f"Question with ID {question_id} not found in subject {subject_id}"}), 404
+
+        # Update the document with the entire modified array
+        doc_ref.update({
+            'questions': updated_questions_array
+        })
+        
+        print(f"Updated question ID {question_id} in subject ID: {subject_id}")
+        # Return the updated question data
+        updated_data = next((q for q in updated_questions_array if q.get('id') == question_id), None)
+        return jsonify(updated_data if updated_data else {"message": "Question updated successfully"}), 200
+
+    except Exception as e:
+        print(f"Error updating question {question_id} in subject {subject_id}: {e}")
+        return jsonify({"error": f"Failed to update question: {e}"}), 500
+
+@app.route('/admin/questions/<subject_id>/<question_id>', methods=['DELETE'])
+@check_auth # Apply decorator
+def admin_delete_question(subject_id, question_id):
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    if not subject_id or not question_id:
+        return jsonify({"error": "Missing subject_id or question_id parameter"}), 400
+
+    try:
+        doc_ref = db.collection('vivaQuestions').document(subject_id)
+        doc_snapshot = doc_ref.get()
+
+        if not doc_snapshot.exists:
+            return jsonify({"error": f"Subject document with ID {subject_id} not found"}), 404
+
+        subject_data = doc_snapshot.to_dict()
+        questions_array = subject_data.get('questions', [])
+
+        # Find the question object to remove based on its ID
+        question_to_remove = None
+        for question in questions_array:
+            # Ensure comparison is done correctly (e.g., check if question is a dict and has 'id')
+            if isinstance(question, dict) and question.get('id') == question_id:
+                question_to_remove = question
+                break
+        
+        if question_to_remove is None:
+             # Question with the given ID wasn't found in the array
+             return jsonify({"error": f"Question with ID {question_id} not found in subject {subject_id}"}), 404
+
+        # Atomically remove the specific question object from the array
+        doc_ref.update({
+            'questions': firestore.ArrayRemove([question_to_remove])
+        })
+        
+        print(f"Deleted question ID {question_id} from subject ID: {subject_id}")
+        return jsonify({"message": "Question deleted successfully"}), 200 # 200 OK status
+
+    except Exception as e:
+        print(f"Error deleting question {question_id} from subject {subject_id}: {e}")
+        return jsonify({"error": f"Failed to delete question: {e}"}), 500
 
 @app.route('/admin/scenarios', methods=['GET'])
+@check_auth # Apply decorator
 def admin_get_all_scenarios():
-    """Returns the list of communication scenarios."""
-    return jsonify(list(all_scenarios)) # Return a copy of the list
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    try:
+        scenarios_ref = db.collection('scenarios') # Assuming collection name is 'scenarios'
+        docs = scenarios_ref.stream()
+
+        all_scenarios = []
+        for doc in docs:
+            scenario_data = doc.to_dict()
+            scenario_data['id'] = doc.id # Add the document ID
+            all_scenarios.append(scenario_data)
+        
+        return jsonify(all_scenarios)
+    except Exception as e:
+        print(f"Error fetching scenarios from Firestore: {e}")
+        return jsonify({"error": f"Failed to fetch scenarios from Firestore: {e}"}), 500
 
 @app.route('/admin/scenarios', methods=['POST'])
+@check_auth # Apply decorator
 def admin_add_scenario():
-    """Adds a new scenario to the list."""
-    data = request.get_json()
-    if not data or 'scenario' not in data or not isinstance(data['scenario'], str) or not data['scenario'].strip():
-        return jsonify({"error": "Missing or invalid scenario text"}), 400
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
 
-    new_scenario = data['scenario'].strip()
-    
-    # Optional: Check for duplicates
-    if new_scenario in all_scenarios:
-         return jsonify({"error": "Scenario already exists"}), 409 # Conflict
-         
-    all_scenarios.append(new_scenario)
-    
-    if save_all_scenarios():
-        return jsonify({"message": "Scenario added successfully", "scenario": new_scenario, "index": len(all_scenarios) - 1}), 201
-    else:
-        all_scenarios.pop() # Rollback
-        return jsonify({"error": "Failed to save scenarios after adding."}), 500
+    try:
+        data = request.get_json()
+        scenario_text = data.get('scenario')
 
-@app.route('/admin/scenarios/<int:scenario_index>', methods=['PUT'])
-def admin_update_scenario(scenario_index):
-    """Updates an existing scenario."""
-    if scenario_index >= len(all_scenarios):
-        return jsonify({"error": "Scenario index not found"}), 404
+        if not scenario_text or not isinstance(scenario_text, str) or not scenario_text.strip():
+            return jsonify({"error": "Invalid or missing 'scenario' text in request body"}), 400
 
-    data = request.get_json()
-    if not data or 'scenario' not in data or not isinstance(data['scenario'], str) or not data['scenario'].strip():
-        return jsonify({"error": "Missing or invalid scenario text"}), 400
+        # Data to be added to Firestore
+        new_scenario_data = {
+            'scenario': scenario_text.strip() # Store the trimmed text
+            # Add a timestamp if desired: 'createdAt': firestore.SERVER_TIMESTAMP
+        }
 
-    updated_scenario = data['scenario'].strip()
-    original_scenario = all_scenarios[scenario_index]
-    
-    # Optional: Check for duplicates if changed
-    if updated_scenario != original_scenario and updated_scenario in all_scenarios:
-        return jsonify({"error": "Updated scenario text already exists"}), 409 # Conflict
-
-    all_scenarios[scenario_index] = updated_scenario
-
-    if save_all_scenarios():
-        return jsonify({"message": "Scenario updated successfully", "scenario": updated_scenario}), 200
-    else:
-        all_scenarios[scenario_index] = original_scenario # Rollback
-        return jsonify({"error": "Failed to save scenarios after update."}), 500
-
-@app.route('/admin/scenarios/<int:scenario_index>', methods=['DELETE'])
-def admin_delete_scenario(scenario_index):
-    """Deletes a scenario."""
-    if scenario_index >= len(all_scenarios):
-        return jsonify({"error": "Scenario index not found"}), 404
+        # Add a new document with an auto-generated ID
+        update_time, doc_ref = db.collection('scenarios').add(new_scenario_data)
         
-    deleted_scenario = all_scenarios.pop(scenario_index)
+        print(f"Added new scenario with ID: {doc_ref.id}")
+        # Return success message and the ID of the new document
+        return jsonify({"message": "Scenario added successfully", "id": doc_ref.id}), 201 # 201 Created status
 
-    if save_all_scenarios():
-        return jsonify({"message": "Scenario deleted successfully"}), 200
-    else:
-        all_scenarios.insert(scenario_index, deleted_scenario) # Rollback
-        return jsonify({"error": "Failed to save scenarios after deletion."}), 500
+    except Exception as e:
+        print(f"Error adding scenario to Firestore: {e}")
+        return jsonify({"error": f"Failed to add scenario to Firestore: {e}"}), 500
+
+@app.route('/admin/scenarios/<scenario_id>', methods=['PUT'])
+@check_auth # Apply decorator
+def admin_update_scenario(scenario_id):
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    if not scenario_id:
+        return jsonify({"error": "Missing scenario_id parameter"}), 400
+
+    try:
+        data = request.get_json()
+        updated_scenario_text = data.get('scenario')
+
+        if not updated_scenario_text or not isinstance(updated_scenario_text, str) or not updated_scenario_text.strip():
+            return jsonify({"error": "Invalid or missing 'scenario' text in request body"}), 400
+
+        doc_ref = db.collection('scenarios').document(scenario_id)
+        
+        # Use update() to modify specific fields
+        # This will create the document if it doesn't exist, 
+        # unless we first check if it exists (more robust but slower)
+        # For simplicity, we assume the frontend only allows editing existing ones.
+        doc_ref.update({
+            'scenario': updated_scenario_text.strip()
+            # Add a timestamp if desired: 'updatedAt': firestore.SERVER_TIMESTAMP 
+        })
+        
+        print(f"Updated scenario with ID: {scenario_id}")
+        # Return success message
+        return jsonify({"message": "Scenario updated successfully", "id": scenario_id}), 200 # 200 OK status
+
+    # Handle cases where the document might not exist if using set with merge=True, 
+    # or other Firestore-specific errors. update() doesn't error if doc doesn't exist.
+    except Exception as e:
+        print(f"Error updating scenario {scenario_id} in Firestore: {e}")
+        return jsonify({"error": f"Failed to update scenario in Firestore: {e}"}), 500
+
+@app.route('/admin/scenarios/<scenario_id>', methods=['DELETE'])
+@check_auth # Apply decorator
+def admin_delete_scenario(scenario_id):
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    if not scenario_id:
+        return jsonify({"error": "Missing scenario_id parameter"}), 400
+
+    try:
+        doc_ref = db.collection('scenarios').document(scenario_id)
+        doc_ref.delete() # Deletes the document. Does not raise error if not found.
+        
+        print(f"Deleted scenario with ID: {scenario_id}")
+        # Return success message
+        return jsonify({"message": "Scenario deleted successfully"}), 200 # 200 OK status
+
+    except Exception as e:
+        print(f"Error deleting scenario {scenario_id} from Firestore: {e}")
+        # Catch potential errors during the delete operation itself, though less common
+        return jsonify({"error": f"Failed to delete scenario from Firestore: {e}"}), 500
+
+@app.route('/subjects', methods=['GET'])
+def get_subjects():
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+    
+    try:
+        subjects = set() # Use a set to automatically handle duplicates
+        questions_ref = db.collection('vivaQuestions')
+        docs = questions_ref.stream()
+        
+        for doc in docs:
+            data = doc.to_dict()
+            subject_name = data.get('subject')
+            if subject_name:
+                subjects.add(subject_name)
+                
+        return jsonify(list(subjects)) # Convert set to list for JSON response
+        
+    except Exception as e:
+        print(f"Error fetching subjects from Firestore: {e}")
+        return jsonify({"error": f"Failed to fetch subjects from Firestore: {e}"}), 500
+
+@app.route('/admin/subjects', methods=['POST'])
+@check_auth # Apply decorator
+def admin_add_subject():
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    try:
+        data = request.get_json()
+        subject_name = data.get('subject')
+
+        if not subject_name or not isinstance(subject_name, str) or not subject_name.strip():
+            return jsonify({"error": "Invalid or missing 'subject' name in request body"}), 400
+        
+        subject_name = subject_name.strip()
+
+        # Check if subject already exists (case-insensitive check recommended)
+        subjects_ref = db.collection('vivaQuestions')
+        # Firestore queries are case-sensitive. For case-insensitive check, 
+        # you might store a lower-case version or fetch all and check in Python.
+        # Simple check (case-sensitive):
+        query = subjects_ref.where('subject', '==', subject_name).limit(1)
+        existing = list(query.stream()) # Use list() to execute the query
+
+        if len(existing) > 0:
+             return jsonify({"error": f"Subject '{subject_name}' already exists."}), 409 # 409 Conflict
+
+        # Data for the new subject document
+        new_subject_data = {
+            'subject': subject_name,
+            'questions': [] # Initialize with an empty questions array
+            # Add a timestamp if desired: 'createdAt': firestore.SERVER_TIMESTAMP
+        }
+
+        # Add a new document with an auto-generated ID
+        update_time, doc_ref = subjects_ref.add(new_subject_data)
+        
+        print(f"Added new subject '{subject_name}' with ID: {doc_ref.id}")
+        # Return success message and the data of the new subject (including ID)
+        new_subject_data['id'] = doc_ref.id # Add the generated ID to the response
+        return jsonify(new_subject_data), 201 # 201 Created status
+
+    except Exception as e:
+        print(f"Error adding subject to Firestore: {e}")
+        return jsonify({"error": f"Failed to add subject to Firestore: {e}"}), 500
+
+# --- Session History Endpoints --- 
+
+# GET /sessions (New Endpoint)
+@app.route('/sessions', methods=['GET'])
+def get_saved_sessions():
+    if db is None:
+        return jsonify({"error": "Firestore is not initialized"}), 500
+
+    try:
+        sessions_ref = db.collection('savedSessions')
+        # Order by creation timestamp, newest first
+        query = sessions_ref.order_by('createdAt', direction=firestore.Query.DESCENDING)
+        docs = query.stream()
+
+        saved_sessions = []
+        for doc in docs:
+            session_data = doc.to_dict()
+            session_data['id'] = doc.id # Add the document ID
+            # Convert timestamp to readable string (optional, can also be done in frontend)
+            if 'createdAt' in session_data and hasattr(session_data['createdAt'], 'isoformat'):
+                 try:
+                     # Attempt ISO 8601 format
+                     session_data['createdAt'] = session_data['createdAt'].isoformat()
+                 except Exception as ts_ex:
+                     print(f"Warning: Could not format timestamp for session {doc.id}: {ts_ex}")
+                     # Keep the original timestamp object if formatting fails
+
+            saved_sessions.append(session_data)
+        
+        return jsonify(saved_sessions)
+
+    except Exception as e:
+        print(f"Error fetching saved sessions from Firestore: {e}")
+        return jsonify({"error": f"Failed to fetch saved sessions: {e}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

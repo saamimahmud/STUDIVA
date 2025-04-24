@@ -18,4 +18,7 @@ __pycache__/
 
 # OS generated files
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Ignore Firebase config file containing sensitive keys
+client/src/firebaseConfig.js 

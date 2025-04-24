@@ -1,13 +1,39 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+
+:root {
+  --primary-color: #007bff; /* Example: Bright Blue */
+  --secondary-color: #6c757d; /* Example: Gray */
+  --background-color: #f8f9fa; /* Light Gray */
+  --surface-color: #ffffff; /* White (for cards, etc.) */
+  --text-color: #212529; /* Dark Gray */
+  --text-muted: #6c757d; /* Lighter Gray */
+  --accent-color: #17a2b8; /* Example: Teal */
+  --border-color: #dee2e6; /* Light Border Color */
+  --error-color: #dc3545; /* Red */
+
+  --font-family-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
+  --font-family-mono: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family-sans);
+  background-color: var(--background-color);
+  color: var(--text-color);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5; /* Improve readability */
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: var(--font-family-mono);
 }
