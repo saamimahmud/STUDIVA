@@ -1,0 +1,14 @@
+Flask
+flask-cors
+python-dotenv
+sentence-transformers
+scikit-learn
+openai-whisper
+nltk
+textstat
+language-tool-python
+firebase-admin
+bert-score
+transformers
+torch
+spacy 

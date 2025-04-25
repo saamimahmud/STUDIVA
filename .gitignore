@@ -1,5 +1,6 @@
 # Node dependencies
 node_modules/
+/server/node_modules/
 
 # Python virtual environment
 /server/venv/
@@ -20,5 +21,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Ignore Firebase config file containing sensitive keys
-client/src/firebaseConfig.js 
+# Ignore server environment and Firebase Admin key
+/server/.env
+# Ignore service account JSON files in server, but keep questions and scenarios
+/server/*.json
+!/server/questions.json
+!/server/scenarios.json
+
+.env 

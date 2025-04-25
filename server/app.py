@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()  # <-- this will read server/.env
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from sentence_transformers import SentenceTransformer, util
@@ -24,23 +26,28 @@ from functools import wraps # For decorator
 from bert_score import score as bert_score_calculate # Import BERTScore
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM # Import for Flan-T5
 import spacy # Import spaCy
+from dotenv import load_dotenv  # Import load_dotenv to load .env file
 
 app = Flask(__name__)
 CORS(app)
 
+# Load environment variables from .env file
+load_dotenv()
+
 # --- Initialize Firebase Admin SDK ---
-SERVICE_ACCOUNT_KEY_PATH = "D:/BTECH CSE AI/6th Sem/Minor project/Key(Firebase)/studiva-42676-firebase-adminsdk-fbsvc-75965200c7.json"
-print(f"Initializing Firebase with key: {SERVICE_ACCOUNT_KEY_PATH}")
+SERVICE_ACCOUNT_KEY_PATH = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+if not SERVICE_ACCOUNT_KEY_PATH:
+    raise ValueError('Missing GOOGLE_APPLICATION_CREDENTIALS environment variable')
+
+print(f'Initializing Firebase Admin with key: {SERVICE_ACCOUNT_KEY_PATH}')
 try:
     cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
     firebase_admin.initialize_app(cred)
     db = firestore.client()
-    print("Firebase Initialized Successfully.")
+    print('Firebase Admin Initialized Successfully.')
 except Exception as e:
-    print(f"CRITICAL: Failed to initialize Firebase Admin SDK: {e}")
-    db = None # Set db to None if initialization fails
-    # Consider exiting if Firebase is essential
-    # exit(1)
+    print(f'CRITICAL: Failed to initialize Firebase Admin SDK: {e}')
+    db = None  # Set db to None if initialization fails
 
 # Download NLTK data (if not already downloaded)
 def download_nltk_resource(resource_id, resource_path):
@@ -71,7 +78,7 @@ whisper_model = whisper.load_model("base")
 print("Whisper model loaded.")
 
 # Load Flan-T5 model and tokenizer
-flan_model_name = "google/flan-t5-base"
+flan_model_name = "google/flan-t5-small"
 flan_tokenizer = None
 flan_model = None
 try:
@@ -293,7 +300,7 @@ def evaluate():
         # Calculate BERTScore
         # lang="en" is default, specify if needed. Using default model.
         # verbose=True prints progress.
-        P, R, F1 = bert_score_calculate([student_answer], [expected_answer], lang="en", verbose=False)
+        P, R, F1 = bert_score_calculate([student_answer], [expected_answer], lang="en", model_type="distilroberta-base", verbose=False)
         # F1 is a tensor, get the float value
         bert_f1_score = round(F1.item() * 100, 2) 
     except Exception as e:

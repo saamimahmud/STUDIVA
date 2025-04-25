@@ -564,8 +564,8 @@ function App() {
                     py: 2, // Padding top and bottom
                     textAlign: 'center',
                     borderTop: '1px solid',
-                    borderColor: 'divider', /
-                    color: 'text.secondary' 
+                    borderColor: 'divider',
+                    color: 'text.secondary'
                 }}
             >
                 <Typography variant="body2">
