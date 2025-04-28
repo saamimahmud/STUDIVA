@@ -35,13 +35,21 @@ CORS(app)
 load_dotenv()
 
 # --- Initialize Firebase Admin SDK ---
-SERVICE_ACCOUNT_KEY_PATH = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-if not SERVICE_ACCOUNT_KEY_PATH:
-    raise ValueError('Missing GOOGLE_APPLICATION_CREDENTIALS environment variable')
+firebase_service_account = os.environ.get('FIREBASE_SERVICE_ACCOUNT')
+if firebase_service_account:
+    try:
+        service_account_info = json.loads(firebase_service_account)
+        cred = credentials.Certificate(service_account_info)
+    except Exception as e:
+        raise ValueError(f'Failed to parse FIREBASE_SERVICE_ACCOUNT environment variable: {e}')
+else:
+    key_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+    if not key_path:
+        raise ValueError('Missing GOOGLE_APPLICATION_CREDENTIALS environment variable')
+    cred = credentials.Certificate(key_path)
 
-print(f'Initializing Firebase Admin with key: {SERVICE_ACCOUNT_KEY_PATH}')
+print('Initializing Firebase Admin SDK...')
 try:
-    cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
     firebase_admin.initialize_app(cred)
     db = firestore.client()
     print('Firebase Admin Initialized Successfully.')

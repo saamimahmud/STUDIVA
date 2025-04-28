@@ -11,4 +11,5 @@ firebase-admin
 bert-score
 transformers
 torch
-spacy 
+spacy
+gunicorn 
