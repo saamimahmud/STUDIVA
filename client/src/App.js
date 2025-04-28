@@ -36,6 +36,9 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import TranslateIcon from '@mui/icons-material/Translate';
 import SaveIcon from '@mui/icons-material/Save';
 
+// Add at the top with other imports
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
 // Simple placeholder component for Admin Mode
 // const AdminPanelPlaceholder = () => (
 //   <div>
@@ -77,7 +80,7 @@ function App() {
     const fetchSubjects = async () => {
       setSubjectsError(null);
       try {
-        const response = await fetch('http://127.0.0.1:5000/subjects');
+        const response = await fetch(`${API_URL}/subjects`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -99,7 +102,7 @@ function App() {
         setIsLoadingQuestions(true);
         setError(null);
         try {
-          const response = await fetch(`http://127.0.0.1:5000/questions?subject=${selectedSubject}&mode=${questionMode}`);
+          const response = await fetch(`${API_URL}/questions?subject=${selectedSubject}&mode=${questionMode}`);
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
           }
@@ -133,7 +136,7 @@ function App() {
     setError(null);
     const currentQuestion = questions[questionIndex];
     try {
-      const response = await fetch('http://127.0.0.1:5000/evaluate', {
+      const response = await fetch(`${API_URL}/evaluate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -199,7 +202,7 @@ function App() {
       const avgKeywords = results.length > 0 ? totalKeywords / results.length : 0;
       const avgFluency = results.length > 0 ? totalFluency / results.length : 0;
 
-      const response = await fetch('http://127.0.0.1:5000/save_session', {
+      const response = await fetch(`${API_URL}/save_session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -236,7 +239,7 @@ function App() {
     formData.append('audio', blob, 'recording.wav');
 
     try {
-      const response = await axios.post('http://127.0.0.1:5000/transcribe', formData, {
+      const response = await axios.post(`${API_URL}/transcribe`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }

@@ -29,6 +29,9 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
 
+// Add at the top with other imports
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
 // Component for the Add Question Form
 const AddQuestionForm = ({ subjectId, subjectName, onAdd, onCancel }) => {
     const [newQuestion, setNewQuestion] = useState('');
@@ -394,7 +397,7 @@ function AdminPanel() {
         setQuestionError(null);
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch('http://127.0.0.1:5000/admin/questions', {
+            const response = await fetch(`${API_URL}/admin/questions`, {
                 headers: { 'Authorization': `Bearer ${token}` } // Add token
             });
             if (!response.ok) {
@@ -419,7 +422,7 @@ function AdminPanel() {
         setScenarioError(null);
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch('http://127.0.0.1:5000/admin/scenarios', {
+            const response = await fetch(`${API_URL}/admin/scenarios`, {
                  headers: { 'Authorization': `Bearer ${token}` } // Add token
             });
             if (!response.ok) {
@@ -471,7 +474,7 @@ function AdminPanel() {
         setGeneralError(null); 
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch(`http://127.0.0.1:5000/admin/questions/${subjectId}`, {
+            const response = await fetch(`${API_URL}/admin/questions/${subjectId}`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json', 
@@ -500,7 +503,7 @@ function AdminPanel() {
         setGeneralError(null);
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch(`http://127.0.0.1:5000/admin/questions/${subjectId}/${questionId}`, { 
+            const response = await fetch(`${API_URL}/admin/questions/${subjectId}/${questionId}`, { 
                 method: 'DELETE', 
                 headers: { 'Authorization': `Bearer ${token}` } // Add token
              });
@@ -521,7 +524,7 @@ function AdminPanel() {
         // We expect updatedData to be { question, expected, keywords }
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch(`http://127.0.0.1:5000/admin/questions/${subjectId}/${questionId}`, {
+            const response = await fetch(`${API_URL}/admin/questions/${subjectId}/${questionId}`, {
                 method: 'PUT',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -553,7 +556,7 @@ function AdminPanel() {
         // Maybe add specific loading state to ScenarioManager?
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch('http://127.0.0.1:5000/admin/scenarios', {
+            const response = await fetch(`${API_URL}/admin/scenarios`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json', 
@@ -579,7 +582,7 @@ function AdminPanel() {
         setGeneralError(null);
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch(`http://127.0.0.1:5000/admin/scenarios/${scenarioId}`, {
+            const response = await fetch(`${API_URL}/admin/scenarios/${scenarioId}`, {
                 method: 'PUT',
                 headers: { 
                     'Content-Type': 'application/json', 
@@ -608,7 +611,7 @@ function AdminPanel() {
         setGeneralError(null);
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch(`http://127.0.0.1:5000/admin/scenarios/${scenarioId}`, { 
+            const response = await fetch(`${API_URL}/admin/scenarios/${scenarioId}`, { 
                 method: 'DELETE',
                  headers: { 'Authorization': `Bearer ${token}` } // Add token
             });
@@ -637,7 +640,7 @@ function AdminPanel() {
 
         try {
             const token = await getAuthToken(currentUser); // Get token
-            const response = await fetch('http://127.0.0.1:5000/admin/subjects', { 
+            const response = await fetch(`${API_URL}/admin/subjects`, { 
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json', 

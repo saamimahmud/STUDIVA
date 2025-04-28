@@ -25,6 +25,8 @@ import StopIcon from '@mui/icons-material/Stop';
 import TranslateIcon from '@mui/icons-material/Translate';
 import SendIcon from '@mui/icons-material/Send';
 
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
 function CommPracticePanel() {
   // State for fetched scenarios
   const [scenariosData, setScenariosData] = useState([]);
@@ -68,7 +70,7 @@ function CommPracticePanel() {
 
       try {
         // Fetch from the same endpoint used by AdminPanel, now with Auth header
-        const response = await fetch('http://127.0.0.1:5000/admin/scenarios', {
+        const response = await fetch(`${API_URL}/admin/scenarios`, {
             headers: {
                 'Authorization': `Bearer ${idToken}`
             }
@@ -108,7 +110,7 @@ function CommPracticePanel() {
     setEvaluation(null);
 
     try {
-      const apiResponse = await fetch('http://127.0.0.1:5000/evaluate_communication', {
+      const apiResponse = await fetch(`${API_URL}/evaluate_communication`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -152,7 +154,7 @@ function CommPracticePanel() {
     formData.append('audio', blob, 'comm_recording.wav');
 
     try {
-      const response = await axios.post('http://127.0.0.1:5000/transcribe', formData, {
+      const response = await axios.post(`${API_URL}/transcribe`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }

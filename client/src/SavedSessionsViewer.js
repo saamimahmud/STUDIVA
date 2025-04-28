@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 
+// Add at the top with other imports
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
 // Helper component to render individual result details (similar to App.js)
 const SessionResultDetail = ({ result, index }) => (
   <div key={index} style={{ borderBottom: '1px solid #eee', paddingBottom: '15px', marginBottom: '15px' }}>
@@ -52,7 +55,7 @@ function SavedSessionsViewer() {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch('http://127.0.0.1:5000/sessions');
+        const response = await fetch(`${API_URL}/sessions`);
         if (!response.ok) {
           let errorMsg = `HTTP error! status: ${response.status}`;
           try {
