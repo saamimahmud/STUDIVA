@@ -1,0 +1,15 @@
+# Ignore Git metadata
+.git
+
+# Ignore frontend code (not needed in server container)
+client/
+
+# Ignore Python virtual environments
+**/venv/
+
+# Ignore Node modules
+**/node_modules/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc 
