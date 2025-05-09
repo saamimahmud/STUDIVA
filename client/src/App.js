@@ -8,6 +8,7 @@ import CommPracticePanel from './CommPracticePanel';
 import AdminPanel from './AdminPanel';
 import SavedSessionsViewer from './SavedSessionsViewer'; // Import the new component
 import Login from './Login'; // Import Login component
+import Signup from './Signup'; // Import Signup component
 import { useAuth } from './context/AuthContext'; // Import useAuth hook
 import { auth } from './firebaseConfig'; // Import auth instance
 import { signOut } from 'firebase/auth'; // Import signOut
@@ -52,6 +53,7 @@ function App() {
   // --- State for Mode Switching ---
   const [currentMode, setCurrentMode] = useState('viva'); // 'viva', 'communication', 'admin', 'history'
   const [studentName, setStudentName] = useState(''); // State for student name
+  const [authView, setAuthView] = useState('login'); // State for login/signup view
 
   const { currentUser, isTeacher } = useAuth(); // Get user and teacher status from context
 
@@ -264,6 +266,10 @@ function App() {
           alert("Failed to log out.");
       }
   };
+
+  // --- Toggle Auth View --- 
+  const showLogin = () => setAuthView('login');
+  const showSignup = () => setAuthView('signup');
 
   // --- Render Logic ---
   const renderVivaPanel = () => (
@@ -483,12 +489,34 @@ function App() {
     </Paper>
   );
 
-  // If no user, force login view (basic implementation without routing)
+  // Render Login or Signup if user is not logged in
   if (!currentUser) {
-      return <Login />;
+    if (authView === 'login') {
+      return <Login onSwitchToSignup={showSignup} />; // Pass toggle function
+    } else {
+      return <Signup onSwitchToLogin={showLogin} />; // Pass toggle function
+    }
   }
 
-  // If user is logged in, show the main app
+  // Render different panels based on mode for logged-in users
+  const renderCurrentPanel = () => {
+      // ... (keep your existing switch or if/else logic for rendering panels based on currentMode)
+      // Example structure:
+      switch (currentMode) {
+          case 'viva':
+              return renderVivaPanel(); // Assuming you have this function
+          case 'communication':
+              return <CommPracticePanel />;
+          case 'admin':
+              return isTeacher ? <AdminPanel /> : <Typography>Access Denied</Typography>; // Protect admin panel
+          case 'history':
+              return <SavedSessionsViewer />;
+          default:
+              return renderVivaPanel(); // Default to viva
+      }
+  };
+
+  // Main App Layout for logged-in users
   return (
     <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}> {/* Added mb: 4 for bottom spacing */}
           {/* AppBar for Header */}
@@ -540,23 +568,7 @@ function App() {
                 )}
                 {/* =================== */} 
 
-                {currentMode === 'viva' && (
-                    <div>
-                        {renderVivaPanel()}
-                    </div>
-                )}
-                {currentMode === 'communication' && (
-                    <CommPracticePanel />
-                )}
-                {currentMode === 'history' && (
-                    <SavedSessionsViewer />
-                )}
-                {currentMode === 'admin' && isTeacher && (
-                    <AdminPanel />
-                )}
-                {currentMode === 'admin' && !isTeacher && (
-                    <Alert severity="error">Access Denied. Admin mode is for teachers only.</Alert>
-                )}
+                {renderCurrentPanel()}
             </Paper>
 
             {/* === Footer === */} 

@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from './firebaseConfig';
 import { useAuth } from './context/AuthContext'; // To potentially redirect if already logged in
+// Removed Link import as we use prop function now
 
 // MUI Imports
 import Container from '@mui/material/Container';
@@ -15,8 +16,10 @@ import Alert from '@mui/material/Alert';
 import Paper from '@mui/material/Paper';
 import Avatar from '@mui/material/Avatar';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import Grid from '@mui/material/Grid'; // Import Grid for layout
 
-function Login() {
+// Accept the toggle function as a prop
+function Login({ onSwitchToSignup }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -135,6 +138,19 @@ function Login() {
           >
             Sign In
           </LoadingButton>
+          
+          {/* Use Button or Link-like Typography to trigger the switch */}
+          <Grid container justifyContent="flex-end">
+            <Grid item>
+              <Button 
+                variant="text" 
+                onClick={onSwitchToSignup} // Call the passed function
+                sx={{ textTransform: 'none' }} // Keep default text case
+              >
+                Don't have an account? Sign Up
+              </Button>
+            </Grid>
+          </Grid>
           
         </Box>
       </Paper> { /* Close Paper instead of Box */ }

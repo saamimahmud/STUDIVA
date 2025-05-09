@@ -362,8 +362,8 @@ def evaluate():
         
         genai.configure(api_key=gemini_api_key)
         
-        # Model choice: 'gemini-pro' is a good default. Check documentation for latest models.
-        gemini_model = genai.GenerativeModel('gemini-pro')
+        # Model choice: Use the specific model for your API key
+        gemini_model = genai.GenerativeModel(model_name='gemini-2.0-flash')
 
         # --- Define a prompt for Gemini (similar structure to before) ---
         prompt = f"""Your task is to evaluate the student's answer based on the expected answer.
@@ -592,16 +592,24 @@ Confidence:
     overall_score = round(overall_score, 2) # Round to 2 decimal places
     # --- End Overall Score Calculation ---
 
+    # Ensure all scores are Python native types for JSON serialization
+    similarity_score_py = float(similarity_score) if similarity_score is not None else 0.0
+    bert_f1_score_py = float(bert_f1_score) if bert_f1_score is not None else 0.0
+    keyword_score_py = float(keyword_score) if keyword_score is not None else 0.0
+    concept_match_score_py = float(concept_match_score) if concept_match_score is not None else 0.0
+    fluency_score_py = float(fluency_score) if fluency_score is not None else 0.0
+    overall_score_py = float(overall_score) if overall_score is not None else 0.0
+
     return jsonify({
-        "similarity_score": similarity_score, 
-        "bert_f1_score": bert_f1_score,      
+        "similarity_score": similarity_score_py, 
+        "bert_f1_score": bert_f1_score_py,      
         "llm_evaluation": llm_evaluation_text, 
         "llm_reasoning": llm_reasoning,        
         "llm_confidence": llm_confidence,    
-        "keyword_score": keyword_score, 
-        "concept_match_score": concept_match_score, 
-        "fluency_score": fluency_score, 
-        "overall_score": overall_score, # NEW: Add the overall score
+        "keyword_score": keyword_score_py, 
+        "concept_match_score": concept_match_score_py, 
+        "fluency_score": fluency_score_py, 
+        "overall_score": overall_score_py, 
         "feedback": feedback, 
         "confidence": confidence 
     })
@@ -892,9 +900,17 @@ def admin_add_subject():
         # Add a new document with an auto-generated ID
         update_time, doc_ref = subjects_ref.add(new_subject_data)
         
-        new_subject_data['id'] = doc_ref.id # Add the generated ID for the response
+        # Prepare data for the JSON response, excluding or converting server timestamp
+        response_data = {
+            'id': doc_ref.id,
+            'subject': subject_name,
+            'questions': [] # Match the structure expected by client if it uses questions array
+        }
+        # If you needed to return the timestamp, you would convert update_time (which is a datetime object after write)
+        # response_data['createdAt'] = update_time.isoformat() 
+
         print(f"Added new subject '{subject_name}' with ID: {doc_ref.id}")
-        return jsonify(new_subject_data), 201 # 201 Created status
+        return jsonify(response_data), 201 # 201 Created status
 
     except Exception as e:
         print(f"Error adding subject to Firestore: {e}")
@@ -1266,6 +1282,85 @@ def admin_delete_scenario(scenario_id):
     except Exception as e:
         print(f"Error deleting scenario {scenario_id} from Firestore: {e}")
         return jsonify({"error": "Failed to delete scenario from database"}), 500
+
+# === User Signup Route ===
+
+@app.route('/signup', methods=['POST'])
+def signup_user():
+    """Registers a new user with email/password and stores info in Firestore."""
+    if not db:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+    name = data.get('name', '') # Optional name
+
+    if not email or not password:
+        return jsonify({"error": "Email and password are required"}), 400
+
+    try:
+        # Create user in Firebase Authentication
+        user_record = auth.create_user(
+            email=email,
+            password=password,
+            display_name=name # Set display name if provided
+        )
+        print(f"Successfully created new user: {user_record.uid}")
+
+        # Store user info in Firestore database
+        user_doc_ref = db.collection('users').document(user_record.uid)
+        user_doc_ref.set({
+            'email': email,
+            'name': name,
+            'role': 'student', # Default role for new signups
+            'created_at': firestore.SERVER_TIMESTAMP
+        })
+        print(f"Stored user info in Firestore for user: {user_record.uid}")
+
+        # Return success response (maybe just the UID or a success message)
+        return jsonify({"message": "User created successfully", "userId": user_record.uid}), 201
+
+    except auth.EmailAlreadyExistsError:
+        print(f"Signup failed: Email {email} already exists.")
+        return jsonify({"error": "Email already exists"}), 409 # Conflict
+    except auth.FirebaseAuthError as e:
+        # Catch other Firebase auth errors (e.g., weak password)
+        print(f"Firebase Auth error during signup: {e}")
+        # You might want to parse the specific error for a better message
+        return jsonify({"error": f"Authentication error: {e}"}), 400
+    except Exception as e:
+        print(f"Error during signup process: {e}")
+        # Attempt to delete the auth user if Firestore write failed (optional cleanup)
+        try:
+            if 'user_record' in locals() and user_record:
+                auth.delete_user(user_record.uid)
+                print(f"Cleaned up Firebase Auth user {user_record.uid} due to Firestore error.")
+        except Exception as cleanup_ex:
+             print(f"Error during signup cleanup: {cleanup_ex}")
+        
+        return jsonify({"error": "An internal error occurred during signup."}), 500
+
+# === Scenario Route for Students ===
+@app.route('/scenarios', methods=['GET'])
+def get_all_scenarios_for_students():
+    """Fetches all scenarios from the 'scenarios' collection in Firestore for student practice."""
+    if not db:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    try:
+        scenarios_ref = db.collection('scenarios').stream() # Assuming collection name is 'scenarios'
+        all_scenarios = []
+        for doc in scenarios_ref:
+            scenario_data = doc.to_dict()
+            scenario_data['id'] = doc.id # Add the document ID
+            all_scenarios.append(scenario_data)
+        
+        print(f"Returning {len(all_scenarios)} scenarios for student practice.")
+        return jsonify(all_scenarios)
+    except Exception as e:
+        print(f"Error fetching scenarios for students from Firestore: {e}")
+        return jsonify({"error": "Failed to fetch scenarios from database"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

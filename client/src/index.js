@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
@@ -61,9 +62,11 @@ root.render(
   <React.StrictMode>
     <ThemeProvider theme={theme}>
       <CssBaseline /> {/* Ensures baseline styles and background color are applied */}
-      <AuthProvider>
-        <App />
-      </AuthProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </BrowserRouter>
     </ThemeProvider>
   </React.StrictMode>
 );

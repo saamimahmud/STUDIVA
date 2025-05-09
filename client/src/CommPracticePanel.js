@@ -69,12 +69,8 @@ function CommPracticePanel() {
       }
 
       try {
-        // Fetch from the same endpoint used by AdminPanel, now with Auth header
-        const response = await fetch(`${API_URL}/admin/scenarios`, {
-            headers: {
-                'Authorization': `Bearer ${idToken}`
-            }
-        }); 
+        // Fetch from the new public endpoint, no auth header needed
+        const response = await fetch(`${API_URL}/scenarios`); 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
